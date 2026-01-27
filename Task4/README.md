@@ -49,4 +49,8 @@
   - Circuit Breaker
     - osago-aggregator - страховки:
       - при сработке (открытии предохранителя) - сразу FAIL по этой страховой
-  - 
+
+
+- Диаграмма с сервисом ОСАГО
+  - [osago.drawio](osago.drawio)
+  - ![osago.jpg](osago.jpg)
