@@ -1,0 +1,58 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_TOP_DOWN()
+
+Person(client, "Клиент")
+
+System_Boundary(insuretech, "InsureTech") {
+  Container(web, "InsureTech Web", "JavaScript, React", "Веб-приложение")
+  Container(core, "core-app", "Kotlin, Spring Boot", "Оформление страховок, локальная реплика продуктов/тарифов")
+  Container(clientInfo, "client-info", "Kotlin, Spring Boot", "Учёт клиентских данных")
+
+  ContainerDb(coreDb, "core-db", "PostgreSQL", "Заявки/тарифы/страховки core-app")
+  ContainerDb(clientInfoDb, "ins-comp-settlement-db", "PostgreSQL", "Данные клиентов/документы")
+
+  Container(productAgg, "ins-product-aggregator", "Kotlin, Spring Boot", "Интеграция со страховыми, агрегирование продуктов/тарифов")
+  Container(settlement, "ins-comp-settlement", "Kotlin, Spring Boot", "Взаиморасчёты со страховыми, реестры")
+
+  ContainerDb(settlementDb, "ins-comp-settlement-db", "PostgreSQL", "Оформленные страховки и данные для реестров")
+
+  ' Event streaming
+  Container(eventBus, "Event Broker", "Kafka / RabbitMQ", "Шина событий для репликации и обмена фактами")
+  Container(outboxPubCore, "Outbox Publisher (core-app)", "Worker", "Публикует события из outbox в брокер")
+  Container(outboxPubAgg, "Outbox Publisher (product-aggregator)", "Worker", "Публикует события из outbox в брокер")
+
+
+  ContainerDb(outboxCore, "core-app outbox", "PostgreSQL table", "Исходящие события core-app")
+  ContainerDb(outboxAgg, "product-aggregator outbox", "PostgreSQL table", "Исходящие события агрегатора")
+}
+
+System_Ext(partners, "Системы партнёров", "Software System")
+System_Ext(payment, "Платёжный сервис", "Software System")
+System_Ext(insurers, "Системы страховых компаний", "Software System")
+
+Rel(client, web, "Использует", "HTTPS")
+Rel(web, core, "API", "REST")
+Rel(web, clientInfo, "Данные клиента", "REST")
+
+Rel(core, coreDb, "Чтение/запись", "SQL")
+Rel(clientInfo, clientInfoDb, "Чтение/запись", "SQL")
+Rel(settlement, settlementDb, "Чтение/запись", "SQL")
+
+Rel(partners, core, "Оформление страховок", "REST")
+Rel(core, payment, "Оплата", "HTTP")
+Rel(productAgg, insurers, "Получение продуктов/тарифов", "REST/SOAP/GraphQL")
+
+' TO-BE event flows
+Rel(productAgg, outboxAgg, "Пишет события ProductCatalogUpdated/TariffsUpdated (в транзакции)", "SQL")
+Rel(outboxPubAgg, outboxAgg, "Читает outbox", "SQL")
+Rel(outboxPubAgg, eventBus, "Публикует события", "Events")
+
+Rel(core, outboxCore, "Пишет события PolicyIssued (в транзакции)", "SQL")
+Rel(outboxPubCore, outboxCore, "Читает outbox", "SQL")
+Rel(outboxPubCore, eventBus, "Публикует события", "Events")
+
+Rel(eventBus, core, "Подписка: ProductCatalogUpdated/TariffsUpdated → обновление локальной реплики", "Events")
+Rel(eventBus, settlement, "Подписка: ProductCatalogUpdated/TariffsUpdated, PolicyIssued", "Events")
+
+@enduml
