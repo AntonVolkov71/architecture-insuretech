@@ -1,0 +1,89 @@
+@startuml
+' Task4 - OSAGO sales (C4-Container style, simplified)
+' You will redraw in draw.io and add Yandex Cloud icons + resiliency badges.
+
+skinparam shadowing false
+skinparam wrapWidth 220
+skinparam maxMessageSize 220
+
+title InsureTech - Container diagram (Task4: OSAGO)
+
+' ======= People / External =======
+actor "Клиент\n(Private)" as user
+rectangle "Системы партнёров\n(B2B)" as partners #b8b2c3
+rectangle "Страховые компании\n(External)" as insurers #b8b2c3
+
+' ======= System boundary =======
+rectangle "InsureTech Prod" as boundary #transparent {
+
+  rectangle "InsureTech Web\n(Frontend)" as web #2d8fd5
+
+  rectangle "core-app\n(Monolith Backend)" as core #2d8fd5
+  database "core-app-db\n(PostgreSQL schema)" as coredb #2d8fd5
+
+  rectangle "client-info\n(Service)" as clientinfo #2d8fd5
+  database "client-info-db\n(PostgreSQL schema)" as clientinfodb #2d8fd5
+
+  rectangle "ins-product-aggregator\n(Service)" as prodagg #2d8fd5
+  database "ins-product-aggregator-db\n(PostgreSQL schema)" as prodaggdb #2d8fd5
+
+  rectangle "ins-comp-settlement\n(Service)" as settlement #2d8fd5
+  database "ins-comp-settlement-db\n(PostgreSQL schema)" as settlementdb #2d8fd5
+
+  rectangle "Event Broker\n(Kafka/RabbitMQ)" as broker #2d8fd5
+
+  rectangle "Outbox Publisher\n(core-app)" as coreoutboxpub #2d8fd5
+  database  "core-app-outbox\n(table)" as coreoutbox #2d8fd5
+
+  rectangle "Outbox Publisher\n(ins-product-aggregator)" as prodoutboxpub #2d8fd5
+  database  "product-aggregator-outbox\n(table)" as prodoutbox #2d8fd5
+
+  ' ======= NEW for Task4 =======
+  rectangle "osago-aggregator\n(Service)\n(NEW)" as osago #2d8fd5
+  database "osago-aggregator-db\n(STATE: requests/offers)\n(NEW)" as osagodb #2d8fd5
+}
+
+' ======= Front interactions =======
+user --> web : HTTPS
+web --> core : REST API\n(создать заявку ОСАГО,\nполучить статус/офферы)\n[PLACE: Rate Limiting, Timeout]
+core --> web : SSE / WebSocket\n(предложения по мере поступления)\n[PLACE: Timeout]
+
+' ======= Partner API (existing) =======
+partners --> core : Public API (REST)\n[PLACE: Rate Limiting]
+
+' ======= client-info =======
+core --> clientinfo : REST\n(данные клиента)\n[PLACE: Timeout, Retry]
+clientinfo --> clientinfodb : SQL
+
+' ======= Existing product catalog streaming (from Task3) =======
+prodagg --> prodaggdb : SQL
+prodaggdb --> prodoutbox : write events (tx)
+prodoutboxpub --> prodoutbox : poll
+prodoutboxpub --> broker : publish\nProductCatalogUpdated/TariffsUpdated
+
+broker --> core : consume\nProductCatalogUpdated/TariffsUpdated
+broker --> settlement : consume\nProductCatalogUpdated/TariffsUpdated
+
+' ======= Existing policy issued streaming (from Task3) =======
+core --> coredb : SQL
+coredb --> coreoutbox : write events (tx)
+coreoutboxpub --> coreoutbox : poll
+coreoutboxpub --> broker : publish\nPolicyIssued
+broker --> settlement : consume\nPolicyIssued
+settlement --> settlementdb : SQL
+
+' ======= NEW OSAGO flow (Task4) =======
+core --> broker : publish\nOsagoQuoteRequested\n(key=quoteRequestId)
+broker --> osago : consume\nOsagoQuoteRequested
+
+osago --> osagodb : SQL\n(store state, deadlines)
+osago --> insurers : REST create application\n[PLACE: Timeout, Retry, Circuit Breaker]
+osago --> insurers : REST get offer (polling)\n(until offer or 60s)\n[PLACE: Timeout, Retry, Circuit Breaker]
+
+osago --> broker : publish\nOsagoQuoteReceived\n(per insurer)
+osago --> broker : publish\nOsagoQuoteFailed / OsagoQuoteTimedOut
+
+broker --> core : consume\nOsagoQuoteReceived/Failed/TimedOut
+core --> coredb : SQL\n(update OSAGO view/state)
+
+@enduml
