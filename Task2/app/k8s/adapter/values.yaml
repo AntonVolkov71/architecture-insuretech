@@ -1,0 +1,16 @@
+prometheus:
+  url: http://prom-prometheus-server.default.svc
+  port: 80
+
+rules:
+  default: false
+  custom:
+    - seriesQuery: 'http_requests_total{namespace!="",service!=""}'
+      resources:
+        overrides:
+          namespace: { resource: "namespace" }
+          service: { resource: "service" }
+      name:
+        matches: '^(.*)_total$'
+        as: 'http_requests_per_second'
+      metricsQuery: 'sum(rate(<<.Series>>{<<.LabelMatchers>>}[5m])) by (<<.GroupBy>>)'
